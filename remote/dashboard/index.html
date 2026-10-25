@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Metronome Thing MQTT Dashboard</title>
+  <link rel="stylesheet" href="style.css">
+  <!-- Paho MQTT client (local bundle for 100% offline support) -->
+  <script src="paho-mqtt.min.js"></script>
+</head>
+<body>
+  <div class="app-container">
+    <!-- Header -->
+    <header class="header">
+      <div class="logo-area">
+        <div class="icon-metronome"></div>
+        <div>
+          <h1>Metronome Thing</h1>
+          <p class="subtitle">IoT MQTT Real-Time Dashboard (Lab 3)</p>
+        </div>
+      </div>
+      <div class="connection-bar">
+        <div class="input-group">
+          <label for="brokerHost">Broker Host:</label>
+          <input type="text" id="brokerHost" value="localhost" placeholder="e.g. 192.168.1.100 or localhost">
+        </div>
+        <div class="input-group" style="max-width: 90px;">
+          <label for="brokerPort">WS Port:</label>
+          <input type="number" id="brokerPort" value="9001" placeholder="9001">
+        </div>
+        <div class="input-group" style="max-width: 100px;">
+          <label for="groupId">Group ID:</label>
+          <input type="text" id="groupId" value="iotpj" placeholder="iotpj">
+        </div>
+        <button id="btnConnect" class="btn btn-primary">Connect</button>
+        <div id="brokerBadge" class="badge badge-offline">Broker: Disconnected</div>
+        <div id="deviceBadge" class="badge badge-offline">Device: Offline (LWT)</div>
+      </div>
+    </header>
+
+    <main class="main-content">
+      <!-- Left Column: Visual Metronome & Display -->
+      <section class="card metronome-visual-card">
+        <h2 class="card-title">Live Metronome Visualizer</h2>
+        
+        <!-- Pendulum Visualizer Skin -->
+        <div class="metronome-skin">
+          <div class="metronome-body">
+            <div class="scale-markings">
+              <span>208</span>
+              <span>160</span>
+              <span>120</span>
+              <span>80</span>
+              <span>40</span>
+            </div>
+            <div class="pendulum-pivot">
+              <div id="pendulumArm" class="pendulum-arm">
+                <div class="pendulum-weight"></div>
+              </div>
+            </div>
+          </div>
+          <div class="beat-indicators">
+            <div class="indicator-group">
+              <span id="ledPlay" class="led-light led-green"></span>
+              <span class="indicator-label">Play (Green LED)</span>
+            </div>
+            <div class="indicator-group">
+              <span id="ledLearn" class="led-light led-red"></span>
+              <span class="indicator-label">Learn (Red LED)</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tempo / Marking readout -->
+        <div class="tempo-marking-box">
+          <div id="tempoMarking" class="tempo-marking">Stopped</div>
+          <div id="tempoPeriod" class="tempo-period">Period: — ms</div>
+          <div id="modeDisplay" class="mode-tag mode-play">Mode: PLAY</div>
+        </div>
+
+        <!-- Audio toggle -->
+        <div class="audio-control">
+          <label class="toggle-switch">
+            <input type="checkbox" id="soundToggle">
+            <span class="toggle-slider"></span>
+          </label>
+          <span class="audio-label">Audible Metronome Tick</span>
+        </div>
+      </section>
+
+      <!-- Right Column: Metrics & Controls -->
+      <section class="dashboard-controls">
+        <!-- Live BPM Metrics Cards -->
+        <div class="metrics-grid">
+          <div class="metric-card current-metric">
+            <div class="metric-label">CURRENT BPM</div>
+            <div id="displayBpm" class="metric-value">0</div>
+            <div class="metric-endpoint" id="displayBpmSource">Topic: state/bpm (Retained)</div>
+          </div>
+          <div class="metric-card min-metric">
+            <div class="metric-label">MINIMUM BPM</div>
+            <div id="displayMin" class="metric-value">0</div>
+            <div class="metric-subtext" id="displayMinNote">(none)</div>
+            <div class="metric-endpoint">Topic: state/min (Retained)</div>
+          </div>
+          <div class="metric-card max-metric">
+            <div class="metric-label">MAXIMUM BPM</div>
+            <div id="displayMax" class="metric-value">0</div>
+            <div class="metric-subtext" id="displayMaxNote">(none)</div>
+            <div class="metric-endpoint">Topic: state/max (Retained)</div>
+          </div>
+        </div>
+
+        <!-- Set BPM Section -->
+        <div class="card control-card">
+          <h2 class="card-title">Set Metronome Tempo (cmd/set_bpm - QoS 1)</h2>
+          <div class="set-bpm-controls">
+            <div class="slider-row">
+              <input type="range" id="bpmSlider" min="20" max="240" value="120" class="slider">
+              <div class="number-input-wrap">
+                <button id="btnBpmMinus" class="btn btn-step">-</button>
+                <input type="number" id="bpmInput" min="0" max="300" value="120" class="num-input">
+                <button id="btnBpmPlus" class="btn btn-step">+</button>
+              </div>
+            </div>
+            
+            <div class="preset-chips">
+              <button class="chip" data-bpm="0">Stop (0)</button>
+              <button class="chip" data-bpm="50">Largo (50)</button>
+              <button class="chip" data-bpm="60">Adagio (60)</button>
+              <button class="chip" data-bpm="80">Andante (80)</button>
+              <button class="chip" data-bpm="108">Moderato (108)</button>
+              <button class="chip" data-bpm="120">Allegretto (120)</button>
+              <button class="chip" data-bpm="144">Allegro (144)</button>
+              <button class="chip" data-bpm="180">Presto (180)</button>
+            </div>
+
+            <button id="btnSetBpm" class="btn btn-success btn-large">
+              Publish BPM Command (QoS 1)
+            </button>
+          </div>
+        </div>
+
+        <!-- Mode & Reset Operations -->
+        <div class="card actions-card">
+          <h2 class="card-title">Remote Device Commands (QoS 1)</h2>
+          <div class="action-buttons-grid">
+            <button id="btnModePlay" class="btn btn-primary">
+              Set Mode: PLAY
+            </button>
+            <button id="btnModeLearn" class="btn btn-warning">
+              Set Mode: LEARN
+            </button>
+            <button id="btnResetMin" class="btn btn-danger">
+              Reset Min BPM (cmd/reset_min)
+            </button>
+            <button id="btnResetMax" class="btn btn-danger">
+              Reset Max BPM (cmd/reset_max)
+            </button>
+            <button id="btnResetBoth" class="btn btn-outline-danger">
+              Reset Both Min & Max
+            </button>
+          </div>
+        </div>
+
+        <!-- MQTT Activity / Console Feed -->
+        <div class="card log-card">
+          <div class="log-header">
+            <h2 class="card-title">MQTT Event & Message Console</h2>
+            <button id="btnClearLog" class="btn btn-text">Clear</button>
+          </div>
+          <div id="logConsole" class="log-console">
+            <div class="log-entry info">[MQTT System] Ready. Enter broker host & port, then click Connect.</div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <p>Lab 3: Extending Your Metronome Thing with MQTT &bull; B8019 Programming the Internet of Things &bull; Group: iotpj</p>
+    </footer>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
