@@ -21,7 +21,11 @@ import signal
 import argparse
 import subprocess
 import threading
+import warnings
 from typing import Optional
+
+# Suppress paho-mqtt deprecation warnings across v1 and v2
+warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 try:
     import paho.mqtt.client as mqtt

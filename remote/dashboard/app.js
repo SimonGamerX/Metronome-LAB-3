@@ -1,31 +1,18 @@
 /**
- * Metronome Thing MQTT Dashboard Application (Lab 3)
+ * Metronome Thing MQTT Dashboard (Lab 3)
  * Group: iotpj
- * 
- * Features:
- *  - Connects to Mosquitto MQTT Broker via WebSockets (default port: 9001).
- *  - Subscribes to:
- *      metronome/<group>/status   (LWT detection)
- *      metronome/<group>/state/#  (Retained state: bpm, mode, min, max)
- *      metronome/<group>/event/#  (Beat ticks, tap events)
- *  - Publishes commands with QoS 1:
- *      metronome/<group>/cmd/set_bpm
- *      metronome/<group>/cmd/set_mode
- *      metronome/<group>/cmd/reset_min
- *      metronome/<group>/cmd/reset_max
- *  - Real-time pendulum animation, virtual LEDs, and synthesized Web Audio tick.
+ * Exact visual match & animation behavior of Lab 2 Dashboard
  */
 
-// Application State
-let client = null;
-let isBrokerConnected = false;
+// State
 let currentBpm = 0;
 let currentMode = "play";
 let minBpm = 0;
 let maxBpm = 0;
+let isConnected = false;
+let client = null;
 let audioCtx = null;
-let animationFrameId = null;
-let lastBeatTimestamp = 0;
+let lastBeatTime = 0;
 
 // DOM Elements
 const brokerHostInput = document.getElementById("brokerHost");
@@ -33,7 +20,7 @@ const brokerPortInput = document.getElementById("brokerPort");
 const groupIdInput = document.getElementById("groupId");
 const btnConnect = document.getElementById("btnConnect");
 const brokerBadge = document.getElementById("brokerBadge");
-const deviceBadge = document.getElementById("deviceBadge");
+const statusBadge = document.getElementById("statusBadge");
 
 const displayBpm = document.getElementById("displayBpm");
 const displayBpmSource = document.getElementById("displayBpmSource");
@@ -44,7 +31,7 @@ const displayMaxNote = document.getElementById("displayMaxNote");
 
 const tempoMarking = document.getElementById("tempoMarking");
 const tempoPeriod = document.getElementById("tempoPeriod");
-const modeDisplay = document.getElementById("modeDisplay");
+const modeBadge = document.getElementById("modeBadge");
 const pendulumArm = document.getElementById("pendulumArm");
 const ledPlay = document.getElementById("ledPlay");
 const ledLearn = document.getElementById("ledLearn");
@@ -68,7 +55,7 @@ const btnClearLog = document.getElementById("btnClearLog");
 
 // Initialize on Load
 window.addEventListener("DOMContentLoaded", () => {
-  // Load saved configurations from localStorage
+  // Restore saved connection params
   const savedHost = localStorage.getItem("metronome_mqtt_host");
   const savedPort = localStorage.getItem("metronome_mqtt_port");
   const savedGroup = localStorage.getItem("metronome_mqtt_group");
@@ -77,20 +64,22 @@ window.addEventListener("DOMContentLoaded", () => {
   if (savedGroup) groupIdInput.value = savedGroup;
 
   setupEventListeners();
-  requestAnimationFrame(pendulumLoop);
+
+  // Start pendulum animation loop
+  requestAnimationFrame(metronomeLoop);
 });
 
 // Event Listeners
 function setupEventListeners() {
   btnConnect.addEventListener("click", () => {
-    if (isBrokerConnected) {
+    if (isConnected) {
       disconnectMqtt();
     } else {
       connectMqtt();
     }
   });
 
-  // Slider & Number Input Sync
+  // Slider <-> Number input synchronization
   bpmSlider.addEventListener("input", (e) => {
     bpmInput.value = e.target.value;
   });
@@ -125,7 +114,7 @@ function setupEventListeners() {
   });
 
   btnSetBpm.addEventListener("click", () => {
-    const val = parseInt(bpmInput.value, 10);
+    let val = parseInt(bpmInput.value, 10);
     if (!isNaN(val)) {
       publishBpm(val);
     }
@@ -156,14 +145,26 @@ function setupEventListeners() {
     logConsole.innerHTML = "";
   });
 
+  // Web Audio Context initialization on user gesture
   soundToggle.addEventListener("change", () => {
     if (soundToggle.checked && !audioCtx) {
-      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      const AudioContext = window.AudioContext || window.webkitAudioContext;
+      audioCtx = new AudioContext();
     }
   });
 }
 
-// MQTT Connection Logic
+// Logger
+function log(msg, type = "info") {
+  const time = new Date().toLocaleTimeString();
+  const entry = document.createElement("div");
+  entry.className = `log-entry ${type}`;
+  entry.textContent = `[${time}] ${msg}`;
+  logConsole.appendChild(entry);
+  logConsole.scrollTop = logConsole.scrollHeight;
+}
+
+// MQTT Connection
 function connectMqtt() {
   const host = brokerHostInput.value.trim() || "localhost";
   const port = parseInt(brokerPortInput.value.trim(), 10) || 9001;
@@ -173,100 +174,120 @@ function connectMqtt() {
   localStorage.setItem("metronome_mqtt_port", port);
   localStorage.setItem("metronome_mqtt_group", group);
 
-  const clientId = "dashboard_" + Math.random().toString(16).substr(2, 8);
-  log(`[MQTT] Connecting to ws://${host}:${port} as ${clientId}...`, "info");
+  // Check if user accidentally entered raw TCP port 1883 instead of WebSocket port 9001
+  if (port === 1883) {
+    log("⚠️ Port 1883 is the raw TCP MQTT port (for Python/C++).", "error");
+    log("Web browsers require the WebSocket port (usually 9001).", "error");
+    log("➡️ Please change 'Port' to 9001 and ensure Mosquitto has WebSockets enabled!", "info");
+  }
 
+  brokerBadge.className = "badge badge-connecting";
+  brokerBadge.textContent = "Connecting...";
   btnConnect.disabled = true;
-  btnConnect.textContent = "Connecting...";
 
+  const clientId = "web_dash_" + Math.random().toString(16).substring(2, 8);
+  log(`Connecting to ws://${host}:${port} as ${clientId}...`, "info");
+
+  // Attempt connection with path "" first, fallback to "/mqtt" if needed
+  attemptConnection(host, port, "", clientId, group, () => {
+    // Fallback attempt with "/mqtt"
+    log("Retrying with path '/mqtt'...", "info");
+    attemptConnection(host, port, "/mqtt", clientId, group, null);
+  });
+}
+
+function attemptConnection(host, port, path, clientId, group, fallbackFn) {
   try {
-    client = new Paho.MQTT.Client(host, Number(port), "/mqtt", clientId);
-  } catch (err) {
-    // Fallback without path if standard websocket
-    try {
-      client = new Paho.MQTT.Client(host, Number(port), clientId);
-    } catch (e) {
-      log(`[MQTT Error] Initialization failed: ${e.message}`, "error");
-      btnConnect.disabled = false;
-      btnConnect.textContent = "Connect";
-      return;
-    }
+    client = new Paho.MQTT.Client(host, Number(port), path, clientId);
+  } catch (e) {
+    log(`Initialization error: ${e.message}`, "error");
+    brokerBadge.className = "badge badge-offline";
+    brokerBadge.textContent = "Broker: Offline";
+    btnConnect.disabled = false;
+    return;
   }
 
   client.onConnectionLost = onConnectionLost;
   client.onMessageArrived = onMessageArrived;
 
   client.connect({
-    onSuccess: onConnectSuccess,
-    onFailure: onConnectFailure,
+    onSuccess: () => {
+      isConnected = true;
+      btnConnect.disabled = false;
+      btnConnect.textContent = "Disconnect";
+      btnConnect.className = "btn btn-danger";
+
+      brokerBadge.className = "badge badge-online";
+      brokerBadge.textContent = "Broker: Online";
+
+      const prefix = `metronome/${group}`;
+      log(`Connected to broker at ws://${host}:${port}${path}`, "success");
+      log(`Subscribing to ${prefix}/# (retained state, events, status)...`, "info");
+
+      // Subscribe to topics
+      client.subscribe(`${prefix}/status`, { qos: 1 });
+      client.subscribe(`${prefix}/state/#`, { qos: 1 });
+      client.subscribe(`${prefix}/event/#`, { qos: 0 });
+    },
+    onFailure: (err) => {
+      if (fallbackFn) {
+        fallbackFn();
+      } else {
+        isConnected = false;
+        btnConnect.disabled = false;
+        btnConnect.textContent = "Connect";
+        btnConnect.className = "btn btn-primary";
+
+        brokerBadge.className = "badge badge-offline";
+        brokerBadge.textContent = "Broker: Offline";
+        log(`Connection failed to ws://${host}:${port}: ${err.errorMessage || err}`, "error");
+
+        if (port === 1883) {
+          log("💡 Tip: Change Port to 9001 (WebSockets) in the connection bar above.", "error");
+        } else {
+          log("💡 Tip: On your Pi, verify that port 9001 is open: 'ss -tulpn | grep 9001'", "info");
+          log("If not running, add 'listener 9001 0.0.0.0' and 'protocol websockets' to /etc/mosquitto/conf.d/metronome.conf and run 'sudo systemctl restart mosquitto'", "info");
+        }
+      }
+    },
     useSSL: false,
     timeout: 5,
     keepAliveInterval: 30
   });
 }
 
-function onConnectSuccess() {
-  isBrokerConnected = true;
-  btnConnect.disabled = false;
-  btnConnect.textContent = "Disconnect";
-  btnConnect.className = "btn btn-danger";
-
-  brokerBadge.textContent = "Broker: Connected";
-  brokerBadge.className = "badge badge-online";
-
-  const group = groupIdInput.value.trim() || "iotpj";
-  const prefix = `metronome/${group}`;
-
-  log(`[MQTT Success] Connected to broker! Subscribing to ${prefix}/#`, "success");
-
-  // Subscribe to Status (LWT), State, and Events
-  client.subscribe(`${prefix}/status`, { qos: 1 });
-  client.subscribe(`${prefix}/state/#`, { qos: 1 });
-  client.subscribe(`${prefix}/event/#`, { qos: 0 });
-}
-
-function onConnectFailure(response) {
-  isBrokerConnected = false;
-  btnConnect.disabled = false;
-  btnConnect.textContent = "Connect";
-  btnConnect.className = "btn btn-primary";
-
-  brokerBadge.textContent = "Broker: Disconnected";
-  brokerBadge.className = "badge badge-offline";
-
-  log(`[MQTT Failed] Could not connect: ${response.errorMessage || response}`, "error");
-}
-
 function onConnectionLost(response) {
-  isBrokerConnected = false;
+  isConnected = false;
   btnConnect.disabled = false;
   btnConnect.textContent = "Connect";
   btnConnect.className = "btn btn-primary";
 
-  brokerBadge.textContent = "Broker: Disconnected";
   brokerBadge.className = "badge badge-offline";
+  brokerBadge.textContent = "Broker: Offline";
 
-  deviceBadge.textContent = "Device: Unknown";
-  deviceBadge.className = "badge badge-offline";
+  statusBadge.className = "badge badge-offline";
+  statusBadge.textContent = "Device: Offline";
 
   if (response.errorCode !== 0) {
-    log(`[MQTT Lost] Connection lost: ${response.errorMessage}`, "warn");
+    log(`Connection lost: ${response.errorMessage}`, "error");
   }
 }
 
 function disconnectMqtt() {
-  if (client && isBrokerConnected) {
+  if (client && isConnected) {
     client.disconnect();
-    log("[MQTT] Disconnected by user.", "info");
   }
-  isBrokerConnected = false;
+  isConnected = false;
   btnConnect.textContent = "Connect";
   btnConnect.className = "btn btn-primary";
-  brokerBadge.textContent = "Broker: Disconnected";
   brokerBadge.className = "badge badge-offline";
+  brokerBadge.textContent = "Broker: Offline";
+  statusBadge.className = "badge badge-offline";
+  statusBadge.textContent = "Device: Offline";
+  log("Disconnected by user.", "info");
 }
 
-// MQTT Message Handling
+// MQTT Message Receiver
 function onMessageArrived(message) {
   const topic = message.destinationName;
   const payloadStr = message.payloadString;
@@ -281,74 +302,84 @@ function onMessageArrived(message) {
     data = { raw: payloadStr };
   }
 
-  const retainNote = isRetained ? " [RETAINED]" : "";
-  log(`[RECV${retainNote}] ${topic}: ${payloadStr}`, isRetained ? "info" : "event");
+  const retainTag = isRetained ? " [RETAINED]" : "";
+  log(`[RECV${retainTag}] ${topic}: ${payloadStr}`, isRetained ? "info" : "event");
 
-  // 1. Status topic (Online / Offline detection via LWT)
+  // Status (LWT)
   if (topic === `${prefix}/status`) {
-    const status = (data.status || "").toLowerCase();
-    if (status === "online") {
-      deviceBadge.textContent = "Device: Online";
-      deviceBadge.className = "badge badge-online";
+    const st = (data.status || "").toLowerCase();
+    if (st === "online") {
+      statusBadge.className = "badge badge-online";
+      statusBadge.textContent = "Device: Online";
     } else {
-      deviceBadge.textContent = "Device: Offline (LWT)";
-      deviceBadge.className = "badge badge-offline";
+      statusBadge.className = "badge badge-offline";
+      statusBadge.textContent = "Device: Offline (LWT)";
     }
   }
 
-  // 2. State BPM topic
+  // State: BPM
   else if (topic === `${prefix}/state/bpm`) {
-    const bpm = data.bpm !== undefined ? parseInt(data.bpm, 10) : 0;
-    updateBpmState(bpm, data.source || "unknown");
+    currentBpm = parseInt(data.bpm !== undefined ? data.bpm : data, 10) || 0;
+    updateBpmDisplay(currentBpm);
+    displayBpmSource.textContent = `state/bpm (source: ${data.source || "unknown"})`;
+    // Sync slider & input
+    if (currentBpm > 0) {
+      bpmInput.value = currentBpm;
+      bpmSlider.value = Math.min(Math.max(currentBpm, 20), 240);
+    }
   }
 
-  // 3. State Mode topic
+  // State: Mode
   else if (topic === `${prefix}/state/mode`) {
-    const mode = (data.mode || "play").toLowerCase();
-    updateModeState(mode);
+    currentMode = (data.mode || "play").toLowerCase();
+    updateModeDisplay(currentMode);
   }
 
-  // 4. State Min topic
+  // State: Min
   else if (topic === `${prefix}/state/min`) {
-    minBpm = data.value !== undefined ? parseInt(data.value, 10) : 0;
-    displayMin.textContent = minBpm;
-    displayMinNote.textContent = minBpm > 0 ? "tracked" : "(none)";
+    minBpm = parseInt(data.value !== undefined ? data.value : data, 10) || 0;
+    updateMinDisplay(minBpm);
   }
 
-  // 5. State Max topic
+  // State: Max
   else if (topic === `${prefix}/state/max`) {
-    maxBpm = data.value !== undefined ? parseInt(data.value, 10) : 0;
-    displayMax.textContent = maxBpm;
-    displayMaxNote.textContent = maxBpm > 0 ? "tracked" : "(none)";
+    maxBpm = parseInt(data.value !== undefined ? data.value : data, 10) || 0;
+    updateMaxDisplay(maxBpm);
   }
 
-  // 6. Beat event
+  // Event: Beat
   else if (topic === `${prefix}/event/beat`) {
-    triggerBeatTick();
+    if (currentMode === "play") {
+      ledPlay.classList.add("active");
+      playClickSound(1200);
+      setTimeout(() => ledPlay.classList.remove("active"), 100);
+    }
   }
 
-  // 7. Tap event
+  // Event: Tap
   else if (topic === `${prefix}/event/tap`) {
-    triggerTapPulse();
+    ledLearn.classList.add("active");
+    playClickSound(1600);
+    setTimeout(() => ledLearn.classList.remove("active"), 100);
   }
 }
 
 // Publishing Commands (QoS 1)
-function publishCommand(cmdName, payloadObj) {
-  if (!client || !isBrokerConnected) {
-    log(`[Error] Cannot publish: Broker not connected!`, "error");
+function publishCommand(cmd, payload) {
+  if (!client || !isConnected) {
+    log("Cannot send: Not connected to broker!", "error");
     return;
   }
   const group = groupIdInput.value.trim() || "iotpj";
-  const topic = `metronome/${group}/cmd/${cmdName}`;
-  const payloadStr = JSON.stringify(payloadObj);
+  const topic = `metronome/${group}/cmd/${cmd}`;
+  const payloadStr = JSON.stringify(payload);
 
-  const message = new Paho.MQTT.Message(payloadStr);
-  message.destinationName = topic;
-  message.qos = 1; // Commands use QoS 1 per spec
-  message.retained = false;
+  const msg = new Paho.MQTT.Message(payloadStr);
+  msg.destinationName = topic;
+  msg.qos = 1;
+  msg.retained = false;
+  client.send(msg);
 
-  client.send(message);
   log(`[PUBLISH QoS 1] ${topic} -> ${payloadStr}`, "success");
 }
 
@@ -364,45 +395,45 @@ function publishReset(type) {
   publishCommand(`reset_${type}`, { reset: true });
 }
 
-// State Update Helpers
-function updateBpmState(bpm, source) {
-  currentBpm = bpm;
+// UI Updaters (Matching Lab 2)
+function updateBpmDisplay(bpm) {
   displayBpm.textContent = bpm;
-  displayBpmSource.textContent = `state/bpm (source: ${source})`;
 
-  // Update slider and number input
-  if (bpm > 0) {
-    bpmInput.value = bpm;
-    bpmSlider.value = Math.min(Math.max(bpm, 20), 240);
-  }
-
-  // Update Tempo Name & Period
-  if (bpm === 0) {
+  if (bpm <= 0) {
     tempoMarking.textContent = "Stopped";
     tempoPeriod.textContent = "Period: — ms";
   } else {
     const periodMs = Math.round(60000 / bpm);
-    tempoPeriod.textContent = `Period: ${periodMs} ms (Half: ${Math.round(periodMs / 2)} ms)`;
+    tempoPeriod.textContent = `Period: ${periodMs} ms`;
     tempoMarking.textContent = getTempoMarking(bpm);
   }
 }
 
-function updateModeState(mode) {
-  currentMode = mode;
+function updateModeDisplay(mode) {
   if (mode === "learn") {
-    modeDisplay.textContent = "Mode: LEARN";
-    modeDisplay.className = "mode-tag mode-learn";
+    modeBadge.textContent = "Mode: LEARN";
+    modeBadge.className = "mode-badge mode-badge-learn";
     ledPlay.classList.remove("active");
   } else {
-    modeDisplay.textContent = "Mode: PLAY";
-    modeDisplay.className = "mode-tag mode-play";
+    modeBadge.textContent = "Mode: PLAY";
+    modeBadge.className = "mode-badge mode-badge-play";
     ledLearn.classList.remove("active");
   }
 }
 
+function updateMinDisplay(val) {
+  displayMin.textContent = val;
+  displayMinNote.textContent = val === 0 ? "(none)" : "BPM";
+}
+
+function updateMaxDisplay(val) {
+  displayMax.textContent = val;
+  displayMaxNote.textContent = val === 0 ? "(none)" : "BPM";
+}
+
 function getTempoMarking(bpm) {
-  if (bpm < 60) return "Largo";
-  if (bpm < 66) return "Larghetto";
+  if (bpm < 50) return "Grave / Largo";
+  if (bpm < 66) return "Largo";
   if (bpm < 76) return "Adagio";
   if (bpm < 108) return "Andante";
   if (bpm < 120) return "Moderato";
@@ -411,70 +442,49 @@ function getTempoMarking(bpm) {
   return "Prestissimo";
 }
 
-// Beat & Pulse Visual / Audio Feedback
-function triggerBeatTick() {
-  if (currentMode === "play" && currentBpm > 0) {
-    ledPlay.classList.add("active");
-    setTimeout(() => ledPlay.classList.remove("active"), 120);
-
-    if (soundToggle.checked) {
-      playClickSound(1000);
-    }
-  }
-}
-
-function triggerTapPulse() {
-  ledLearn.classList.add("active");
-  setTimeout(() => ledLearn.classList.remove("active"), 120);
-
-  if (soundToggle.checked) {
-    playClickSound(1400);
-  }
-}
-
-function playClickSound(freq = 1000) {
+// Play Click Sound via Web Audio API (Exact Lab 2)
+function playClickSound(freq = 1200) {
+  if (!soundToggle.checked || !audioCtx) return;
   try {
-    if (!audioCtx) {
-      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    }
     const osc = audioCtx.createOscillator();
     const gain = audioCtx.createGain();
-
     osc.type = "sine";
     osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
-
-    gain.gain.setValueAtTime(0.25, audioCtx.currentTime);
+    gain.gain.setValueAtTime(0.3, audioCtx.currentTime);
     gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.04);
-
     osc.connect(gain);
     gain.connect(audioCtx.destination);
-
     osc.start();
     osc.stop(audioCtx.currentTime + 0.04);
   } catch (e) {
-    // AudioContext permission guard
+    console.error(e);
   }
 }
 
-// Continuous Pendulum Animation Loop
-function pendulumLoop(timestamp) {
+// Metronome Animation Loop (Exact Lab 2 pendulum physics & green play LED blink)
+function metronomeLoop(timestamp) {
   if (currentBpm > 0 && currentMode === "play") {
     const periodMs = 60000 / currentBpm;
-    // Angle oscillates between -28 deg and +28 deg
-    const angle = Math.sin((timestamp / periodMs) * 2 * Math.PI) * 28;
-    pendulumArm.style.transform = `rotate(${angle.toFixed(2)}deg)`;
-  } else {
-    pendulumArm.style.transform = "rotate(0deg)";
-  }
-  requestAnimationFrame(pendulumLoop);
-}
+    // Angle in degrees between -28 and +28
+    const phase = ((timestamp % periodMs) / periodMs) * 2 * Math.PI;
+    const angle = Math.sin(phase) * 28;
+    pendulumArm.style.transform = `translateX(-50%) rotate(${angle}deg)`;
 
-// Log Feed
-function log(msg, type = "info") {
-  const entry = document.createElement("div");
-  entry.className = `log-entry ${type}`;
-  const time = new Date().toLocaleTimeString();
-  entry.textContent = `[${time}] ${msg}`;
-  logConsole.appendChild(entry);
-  logConsole.scrollTop = logConsole.scrollHeight;
+    // Detect beat peak / flash LED locally if no MQTT event broker
+    const timeSinceLastBeat = timestamp - lastBeatTime;
+    if (timeSinceLastBeat >= periodMs) {
+      lastBeatTime = timestamp;
+      ledPlay.classList.add("active");
+      playClickSound(1200);
+      setTimeout(() => {
+        ledPlay.classList.remove("active");
+      }, Math.min(100, periodMs / 3));
+    }
+  } else {
+    // Stopped
+    pendulumArm.style.transform = "translateX(-50%) rotate(0deg)";
+    ledPlay.classList.remove("active");
+  }
+
+  requestAnimationFrame(metronomeLoop);
 }

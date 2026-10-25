@@ -17,6 +17,10 @@ import sys
 import json
 import time
 import argparse
+import warnings
+
+# Suppress paho-mqtt deprecation warnings across v1 and v2
+warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 try:
     import paho.mqtt.client as mqtt

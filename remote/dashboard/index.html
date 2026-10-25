@@ -3,9 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Metronome Thing MQTT Dashboard</title>
+  <title>Metronome Thing Dashboard</title>
   <link rel="stylesheet" href="style.css">
-  <!-- Paho MQTT client (local bundle for 100% offline support) -->
   <script src="paho-mqtt.min.js"></script>
 </head>
 <body>
@@ -16,25 +15,25 @@
         <div class="icon-metronome"></div>
         <div>
           <h1>Metronome Thing</h1>
-          <p class="subtitle">IoT MQTT Real-Time Dashboard (Lab 3)</p>
+          <p class="subtitle">IoT Embedded Device Dashboard (Lab 3 - MQTT)</p>
         </div>
       </div>
       <div class="connection-bar">
         <div class="input-group">
-          <label for="brokerHost">Broker Host:</label>
-          <input type="text" id="brokerHost" value="localhost" placeholder="e.g. 192.168.1.100 or localhost">
+          <label for="brokerHost">Broker:</label>
+          <input type="text" id="brokerHost" value="localhost" placeholder="localhost or IP" style="width: 140px;">
         </div>
-        <div class="input-group" style="max-width: 90px;">
-          <label for="brokerPort">WS Port:</label>
-          <input type="number" id="brokerPort" value="9001" placeholder="9001">
+        <div class="input-group">
+          <label for="brokerPort">Port:</label>
+          <input type="number" id="brokerPort" value="9001" placeholder="9001" style="width: 70px;">
         </div>
-        <div class="input-group" style="max-width: 100px;">
-          <label for="groupId">Group ID:</label>
-          <input type="text" id="groupId" value="iotpj" placeholder="iotpj">
+        <div class="input-group">
+          <label for="groupId">Group:</label>
+          <input type="text" id="groupId" value="iotpj" placeholder="iotpj" style="width: 75px;">
         </div>
         <button id="btnConnect" class="btn btn-primary">Connect</button>
-        <div id="brokerBadge" class="badge badge-offline">Broker: Disconnected</div>
-        <div id="deviceBadge" class="badge badge-offline">Device: Offline (LWT)</div>
+        <div id="brokerBadge" class="badge badge-offline">Broker: Offline</div>
+        <div id="statusBadge" class="badge badge-offline">Device: Offline</div>
       </div>
     </header>
 
@@ -43,7 +42,7 @@
       <section class="card metronome-visual-card">
         <h2 class="card-title">Live Metronome Visualizer</h2>
         
-        <!-- Pendulum Visualizer Skin -->
+        <!-- Pendulum Visualizer Skin (Exact Lab 2) -->
         <div class="metronome-skin">
           <div class="metronome-body">
             <div class="scale-markings">
@@ -75,7 +74,7 @@
         <div class="tempo-marking-box">
           <div id="tempoMarking" class="tempo-marking">Stopped</div>
           <div id="tempoPeriod" class="tempo-period">Period: — ms</div>
-          <div id="modeDisplay" class="mode-tag mode-play">Mode: PLAY</div>
+          <div id="modeBadge" class="mode-badge mode-badge-play">Mode: PLAY</div>
         </div>
 
         <!-- Audio toggle -->
@@ -84,7 +83,7 @@
             <input type="checkbox" id="soundToggle">
             <span class="toggle-slider"></span>
           </label>
-          <span class="audio-label">Audible Metronome Tick</span>
+          <span class="audio-label">Audible Metronome Click</span>
         </div>
       </section>
 
@@ -95,19 +94,19 @@
           <div class="metric-card current-metric">
             <div class="metric-label">CURRENT BPM</div>
             <div id="displayBpm" class="metric-value">0</div>
-            <div class="metric-endpoint" id="displayBpmSource">Topic: state/bpm (Retained)</div>
+            <div class="metric-endpoint" id="displayBpmSource">Topic: state/bpm</div>
           </div>
           <div class="metric-card min-metric">
             <div class="metric-label">MINIMUM BPM</div>
             <div id="displayMin" class="metric-value">0</div>
             <div class="metric-subtext" id="displayMinNote">(none)</div>
-            <div class="metric-endpoint">Topic: state/min (Retained)</div>
+            <div class="metric-endpoint">Topic: state/min</div>
           </div>
           <div class="metric-card max-metric">
             <div class="metric-label">MAXIMUM BPM</div>
             <div id="displayMax" class="metric-value">0</div>
             <div class="metric-subtext" id="displayMaxNote">(none)</div>
-            <div class="metric-endpoint">Topic: state/max (Retained)</div>
+            <div class="metric-endpoint">Topic: state/max</div>
           </div>
         </div>
 
@@ -136,19 +135,19 @@
             </div>
 
             <button id="btnSetBpm" class="btn btn-success btn-large">
-              Publish BPM Command (QoS 1)
+              Send to Device (cmd/set_bpm)
             </button>
           </div>
         </div>
 
-        <!-- Mode & Reset Operations -->
+        <!-- Refresh & Reset Section -->
         <div class="card actions-card">
-          <h2 class="card-title">Remote Device Commands (QoS 1)</h2>
+          <h2 class="card-title">Device MQTT Operations (QoS 1)</h2>
           <div class="action-buttons-grid">
             <button id="btnModePlay" class="btn btn-primary">
               Set Mode: PLAY
             </button>
-            <button id="btnModeLearn" class="btn btn-warning">
+            <button id="btnModeLearn" class="btn btn-secondary">
               Set Mode: LEARN
             </button>
             <button id="btnResetMin" class="btn btn-danger">
@@ -163,14 +162,14 @@
           </div>
         </div>
 
-        <!-- MQTT Activity / Console Feed -->
+        <!-- Activity / Console Feed -->
         <div class="card log-card">
           <div class="log-header">
-            <h2 class="card-title">MQTT Event & Message Console</h2>
+            <h2 class="card-title">MQTT Activity Log</h2>
             <button id="btnClearLog" class="btn btn-text">Clear</button>
           </div>
           <div id="logConsole" class="log-console">
-            <div class="log-entry info">[MQTT System] Ready. Enter broker host & port, then click Connect.</div>
+            <div class="log-entry info">[System] Ready to connect to Metronome MQTT Broker...</div>
           </div>
         </div>
       </section>
