@@ -13,6 +13,8 @@ let isConnected = false;
 let client = null;
 let audioCtx = null;
 let lastBeatTime = 0;
+let lastMqttBeatTimestamp = 0;
+let lastSoundPlayTime = 0;
 let isTick = true;
 
 // DOM Elements
@@ -385,7 +387,8 @@ function onMessageArrived(message) {
   // Event: Beat
   else if (topic === `${prefix}/event/beat`) {
     if (currentMode === "play") {
-      lastBeatTime = performance.now();
+      lastMqttBeatTimestamp = performance.now();
+      lastBeatTime = lastMqttBeatTimestamp;
       ledPlay.classList.add("active");
       playClickSound();
       setTimeout(() => ledPlay.classList.remove("active"), 100);
@@ -482,60 +485,45 @@ function getTempoMarking(bpm) {
 function playClickSound(customFreq = null) {
   if (!soundToggle.checked) return;
 
+  const nowMs = performance.now();
+  // Minimum 120ms debounce between clicks to completely eliminate double-clicks
+  if (nowMs - lastSoundPlayTime < 120) {
+    return;
+  }
+  lastSoundPlayTime = nowMs;
+
   initAudio();
   if (!audioCtx) return;
 
   try {
     const now = audioCtx.currentTime;
 
-    let bodyFreqStart, bodyFreqEnd, clickFreq, duration;
-
+    let startFreq, endFreq;
     if (customFreq) {
-      bodyFreqStart = customFreq;
-      bodyFreqEnd = Math.max(customFreq * 0.2, 40);
-      clickFreq = customFreq * 1.8;
-      duration = 0.035;
+      startFreq = customFreq;
+      endFreq = Math.max(customFreq * 0.15, 60);
     } else {
       // Alternating authentic mechanical Tick (high) / Tock (low)
-      bodyFreqStart = isTick ? 1400 : 950;
-      bodyFreqEnd = isTick ? 220 : 150;
-      clickFreq = isTick ? 3200 : 2400;
-      duration = 0.035;
+      startFreq = isTick ? 1600 : 1050;
+      endFreq = isTick ? 120 : 80;
       isTick = !isTick;
     }
 
-    // 1. Woody body resonance knock (sine wave with rapid downward exponential pitch decay)
-    const bodyOsc = audioCtx.createOscillator();
-    const bodyGain = audioCtx.createGain();
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
 
-    bodyOsc.type = "sine";
-    bodyOsc.frequency.setValueAtTime(bodyFreqStart, now);
-    bodyOsc.frequency.exponentialRampToValueAtTime(bodyFreqEnd, now + 0.025);
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(startFreq, now);
+    osc.frequency.exponentialRampToValueAtTime(endFreq, now + 0.02);
 
-    bodyGain.gain.setValueAtTime(0.7, now);
-    bodyGain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
+    gain.gain.setValueAtTime(0.8, now);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.025);
 
-    bodyOsc.connect(bodyGain);
-    bodyGain.connect(audioCtx.destination);
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
 
-    bodyOsc.start(now);
-    bodyOsc.stop(now + duration + 0.005);
-
-    // 2. Escapement pallet click transient (fast decaying triangle wave for crisp mechanical snap)
-    const clickOsc = audioCtx.createOscillator();
-    const clickGain = audioCtx.createGain();
-
-    clickOsc.type = "triangle";
-    clickOsc.frequency.setValueAtTime(clickFreq, now);
-
-    clickGain.gain.setValueAtTime(0.5, now);
-    clickGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.008);
-
-    clickOsc.connect(clickGain);
-    clickGain.connect(audioCtx.destination);
-
-    clickOsc.start(now);
-    clickOsc.stop(now + 0.012);
+    osc.start(now);
+    osc.stop(now + 0.03);
   } catch (e) {
     console.error("Audio playback error:", e);
   }
@@ -550,15 +538,20 @@ function metronomeLoop(timestamp) {
     const angle = Math.sin(phase) * 28;
     pendulumArm.style.transform = `translateX(-50%) rotate(${angle}deg)`;
 
-    // Detect beat peak / flash LED locally if no MQTT event broker
-    const timeSinceLastBeat = timestamp - lastBeatTime;
-    if (timeSinceLastBeat >= periodMs) {
-      lastBeatTime = timestamp;
-      ledPlay.classList.add("active");
-      playClickSound();
-      setTimeout(() => {
-        ledPlay.classList.remove("active");
-      }, Math.min(100, periodMs / 3));
+    // Check if live MQTT beat events are streaming from the device
+    const hasLiveMqtt = isConnected && (performance.now() - lastMqttBeatTimestamp < periodMs * 2.0);
+
+    // Only detect beat peak & flash LED locally if no live MQTT event stream is active
+    if (!hasLiveMqtt) {
+      const timeSinceLastBeat = timestamp - lastBeatTime;
+      if (timeSinceLastBeat >= periodMs) {
+        lastBeatTime = timestamp;
+        ledPlay.classList.add("active");
+        playClickSound();
+        setTimeout(() => {
+          ledPlay.classList.remove("active");
+        }, Math.min(100, periodMs / 3));
+      }
     }
   } else {
     // Stopped
