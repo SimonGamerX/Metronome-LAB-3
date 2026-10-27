@@ -13,6 +13,7 @@ let isConnected = false;
 let client = null;
 let audioCtx = null;
 let lastBeatTime = 0;
+let isTick = true;
 
 // DOM Elements
 const brokerHostInput = document.getElementById("brokerHost");
@@ -59,9 +60,15 @@ window.addEventListener("DOMContentLoaded", () => {
   const savedHost = localStorage.getItem("metronome_mqtt_host");
   const savedPort = localStorage.getItem("metronome_mqtt_port");
   const savedGroup = localStorage.getItem("metronome_mqtt_group");
+  const savedSound = localStorage.getItem("metronome_mqtt_sound");
   if (savedHost) brokerHostInput.value = savedHost;
   if (savedPort) brokerPortInput.value = savedPort;
   if (savedGroup) groupIdInput.value = savedGroup;
+  if (savedSound !== null) {
+    soundToggle.checked = (savedSound === "true");
+  } else {
+    soundToggle.checked = true;
+  }
 
   setupEventListeners();
 
@@ -145,13 +152,41 @@ function setupEventListeners() {
     logConsole.innerHTML = "";
   });
 
-  // Web Audio Context initialization on user gesture
+  // Web Audio Context initialization on user toggle
   soundToggle.addEventListener("change", () => {
-    if (soundToggle.checked && !audioCtx) {
-      const AudioContext = window.AudioContext || window.webkitAudioContext;
-      audioCtx = new AudioContext();
+    localStorage.setItem("metronome_mqtt_sound", soundToggle.checked);
+    if (soundToggle.checked) {
+      initAudio();
     }
   });
+
+  // Unlock Web Audio on first user interaction anywhere
+  const unlockAudio = () => {
+    initAudio();
+    if (audioCtx && audioCtx.state === "running") {
+      document.removeEventListener("pointerdown", unlockAudio);
+      document.removeEventListener("keydown", unlockAudio);
+    }
+  };
+  document.addEventListener("pointerdown", unlockAudio);
+  document.addEventListener("keydown", unlockAudio);
+}
+
+// Initialize and resume AudioContext safely
+function initAudio() {
+  try {
+    if (!audioCtx) {
+      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+      if (AudioContextClass) {
+        audioCtx = new AudioContextClass();
+      }
+    }
+    if (audioCtx && audioCtx.state === "suspended") {
+      audioCtx.resume();
+    }
+  } catch (e) {
+    console.error("AudioContext init error:", e);
+  }
 }
 
 // Logger
@@ -350,8 +385,9 @@ function onMessageArrived(message) {
   // Event: Beat
   else if (topic === `${prefix}/event/beat`) {
     if (currentMode === "play") {
+      lastBeatTime = performance.now();
       ledPlay.classList.add("active");
-      playClickSound(1200);
+      playClickSound();
       setTimeout(() => ledPlay.classList.remove("active"), 100);
     }
   }
@@ -359,7 +395,7 @@ function onMessageArrived(message) {
   // Event: Tap
   else if (topic === `${prefix}/event/tap`) {
     ledLearn.classList.add("active");
-    playClickSound(1600);
+    playClickSound(1800);
     setTimeout(() => ledLearn.classList.remove("active"), 100);
   }
 }
@@ -442,22 +478,66 @@ function getTempoMarking(bpm) {
   return "Prestissimo";
 }
 
-// Play Click Sound via Web Audio API (Exact Lab 2)
-function playClickSound(freq = 1200) {
-  if (!soundToggle.checked || !audioCtx) return;
+// Play Click Sound via Web Audio API (Authentic Mechanical Metronome Tick-Tock)
+function playClickSound(customFreq = null) {
+  if (!soundToggle.checked) return;
+
+  initAudio();
+  if (!audioCtx) return;
+
   try {
-    const osc = audioCtx.createOscillator();
-    const gain = audioCtx.createGain();
-    osc.type = "sine";
-    osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
-    gain.gain.setValueAtTime(0.3, audioCtx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.04);
-    osc.connect(gain);
-    gain.connect(audioCtx.destination);
-    osc.start();
-    osc.stop(audioCtx.currentTime + 0.04);
+    const now = audioCtx.currentTime;
+
+    let bodyFreqStart, bodyFreqEnd, clickFreq, duration;
+
+    if (customFreq) {
+      bodyFreqStart = customFreq;
+      bodyFreqEnd = Math.max(customFreq * 0.2, 40);
+      clickFreq = customFreq * 1.8;
+      duration = 0.035;
+    } else {
+      // Alternating authentic mechanical Tick (high) / Tock (low)
+      bodyFreqStart = isTick ? 1400 : 950;
+      bodyFreqEnd = isTick ? 220 : 150;
+      clickFreq = isTick ? 3200 : 2400;
+      duration = 0.035;
+      isTick = !isTick;
+    }
+
+    // 1. Woody body resonance knock (sine wave with rapid downward exponential pitch decay)
+    const bodyOsc = audioCtx.createOscillator();
+    const bodyGain = audioCtx.createGain();
+
+    bodyOsc.type = "sine";
+    bodyOsc.frequency.setValueAtTime(bodyFreqStart, now);
+    bodyOsc.frequency.exponentialRampToValueAtTime(bodyFreqEnd, now + 0.025);
+
+    bodyGain.gain.setValueAtTime(0.7, now);
+    bodyGain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
+
+    bodyOsc.connect(bodyGain);
+    bodyGain.connect(audioCtx.destination);
+
+    bodyOsc.start(now);
+    bodyOsc.stop(now + duration + 0.005);
+
+    // 2. Escapement pallet click transient (fast decaying triangle wave for crisp mechanical snap)
+    const clickOsc = audioCtx.createOscillator();
+    const clickGain = audioCtx.createGain();
+
+    clickOsc.type = "triangle";
+    clickOsc.frequency.setValueAtTime(clickFreq, now);
+
+    clickGain.gain.setValueAtTime(0.5, now);
+    clickGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.008);
+
+    clickOsc.connect(clickGain);
+    clickGain.connect(audioCtx.destination);
+
+    clickOsc.start(now);
+    clickOsc.stop(now + 0.012);
   } catch (e) {
-    console.error(e);
+    console.error("Audio playback error:", e);
   }
 }
 
@@ -475,7 +555,7 @@ function metronomeLoop(timestamp) {
     if (timeSinceLastBeat >= periodMs) {
       lastBeatTime = timestamp;
       ledPlay.classList.add("active");
-      playClickSound(1200);
+      playClickSound();
       setTimeout(() => {
         ledPlay.classList.remove("active");
       }, Math.min(100, periodMs / 3));

@@ -354,6 +354,12 @@ body {
   gap: 10px;
   font-size: 13px;
   color: var(--text-muted);
+  cursor: pointer;
+  user-select: none;
+}
+
+.audio-control:hover .audio-label {
+  color: var(--text-main);
 }
 
 /* Metrics Grid (Exact Lab 2) */
