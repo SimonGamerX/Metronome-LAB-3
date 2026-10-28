@@ -10,7 +10,7 @@
 ---
 
 ## Demonstration Video
-* **YouTube Video Link**: `https://youtu.be/[INSERT_YOUR_DEMO_VIDEO_LINK_HERE]`
+* **YouTube Video Link**: [Video Demonstration Here](https://youtu.be/f7nMIJXFRQo) (`https://youtu.be/f7nMIJXFRQo`)
 * *(The video demonstrates the group introduction, hardware setup, local button/LED interactions, remote MQTT command execution via QoS 1, late-joining subscriber receiving retained messages, and unexpected device crash triggering Last Will and Testament).*
 
 ---

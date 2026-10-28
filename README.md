@@ -1,7 +1,8 @@
 # Metronome Thing (MQTT) — Setup & Run Guide
 
 **Group ID**: `iotpj`  
-**Topic Prefix**: `metronome/iotpj/`
+**Topic Prefix**: `metronome/iotpj/`  
+**YouTube Demo Video**: [Video Demonstration Here](https://youtu.be/f7nMIJXFRQo) (`https://youtu.be/f7nMIJXFRQo`)
 
 ---
 

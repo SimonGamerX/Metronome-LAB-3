@@ -119,6 +119,7 @@ metronome/
 | **v2.1** | 2026-10-25 | Antigravity AI | Implemented Lab 3 hybrid architecture: `device/` (C++ core + Python MQTT), `remote/` (dashboard + CLI tools), `README.md`, `report.md`, and `report.pdf`. |
 | **v2.2** | 2026-10-25 | Antigravity AI | Extracted member photos (Riccardo, Nicola, Simone) and reconstructed `report.pdf` to match the exact 2-page layout, styling, and typography of the Lab 2 report. |
 | **v2.3** | 2026-10-27 | Antigravity AI | Resolved dashboard Web Audio issue: enabled default audible click, added global interaction unlock, and synthesized authentic mechanical metronome tick-tock. |
+| **v2.4** | 2026-10-28 | Antigravity AI | Integrated YouTube demo link (https://youtu.be/f7nMIJXFRQo) into report.pdf matching reference layout; passed full automated MQTT test suite and packaged submission zip. |
 
 ---
 

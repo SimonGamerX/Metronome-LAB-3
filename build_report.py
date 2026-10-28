@@ -173,7 +173,21 @@ def generate_exact_2page_report():
         ('LINEBELOW', (0, 1), (-1, 1), 0.5, colors.HexColor('#e2e8f0')),
     ]))
     story.append(t_members)
-    story.append(Spacer(1, 12))
+    story.append(Spacer(1, 8))
+
+    # Video Demonstration Link (Exact match to Lab 1 style)
+    video_link_style = ParagraphStyle(
+        'DocVideoLink',
+        parent=styles['Normal'],
+        fontName='Times-Bold',
+        fontSize=13.5,
+        leading=18,
+        textColor=colors.HexColor('#0b57d0'),
+        spaceBefore=2,
+        spaceAfter=6
+    )
+    story.append(Paragraph('<a href="https://youtu.be/f7nMIJXFRQo" color="#0b57d0"><u>Video Demonstration Here</u></a>', video_link_style))
+    story.append(Spacer(1, 4))
 
     # Project Description (Exactly matching the flow of Lab 2 Page 1)
     story.append(Paragraph("Project Description", h1_style))
@@ -229,11 +243,7 @@ def generate_exact_2page_report():
     )
     story.append(Paragraph(p3, body_style))
 
-    story.append(Paragraph(
-        "Demo Video (YouTube): <u>https://youtu.be/[YOUR_DEMO_VIDEO_LINK_HERE]</u>",
-        body_style
-    ))
-    story.append(Spacer(1, 4))
+    story.append(Spacer(1, 2))
 
     # Distribution of Effort (Exact style and structure of Lab 2)
     story.append(Paragraph("Distribution of Effort", h1_style))
